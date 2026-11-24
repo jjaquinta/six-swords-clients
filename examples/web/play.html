@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Six Swords</title>
+<style>
+  :root { color-scheme: light dark; --fg: #111; --bg: #fff; --muted: #555; --line: #ccc; --accent: #0b5394; }
+  @media (prefers-color-scheme: dark) {
+    :root { --fg: #eee; --bg: #121212; --muted: #bbb; --line: #444; --accent: #8ab4f8; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 1.125rem/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         color: var(--fg); background: var(--bg); }
+  main { max-width: 42rem; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.15rem; margin: 1.25rem 0 .5rem; }
+  p { margin: 0 0 .5rem; }
+  .hint { color: var(--muted); }
+  #log { list-style: none; margin: 0; padding: 0; }
+  #log li { border-top: 1px solid var(--line); padding: .5rem 0; }
+  #log .you { font-weight: 600; }
+  #log .reply { white-space: pre-wrap; }
+  form { display: flex; gap: .5rem; flex-wrap: wrap; align-items: end; margin-top: 1rem; }
+  .field { flex: 1 1 12rem; display: flex; flex-direction: column; }
+  label { font-weight: 600; }
+  input, button { font: inherit; min-height: 2.75rem; border-radius: .4rem; }
+  input { padding: .4rem .6rem; border: 2px solid var(--muted); background: var(--bg); color: var(--fg); }
+  button { padding: .4rem .9rem; border: 2px solid var(--accent); background: var(--accent); color: var(--bg);
+           cursor: pointer; }
+  .quick button { background: transparent; color: var(--accent); }
+  .quick { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0; padding: 0; list-style: none; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+                     clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Six Swords</h1>
+  <p class="hint">A fantasy adventure in words. Type a command, such as look, north or help, and press Enter.
+    Replies are read out by your screen reader as they arrive, and kept in the story below.</p>
+
+  <form id="command-form" autocomplete="off">
+    <div class="field">
+      <label for="command">Command</label>
+      <input id="command" name="text" type="text" maxlength="300"
+             autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="send">
+    </div>
+    <button type="submit">Send</button>
+  </form>
+
+  <h2 id="quick-heading">Quick commands</h2>
+  <ul class="quick" aria-labelledby="quick-heading">
+    <li><button type="button" data-say="look">Look</button></li>
+    <li><button type="button" data-say="north">North</button></li>
+    <li><button type="button" data-say="south">South</button></li>
+    <li><button type="button" data-say="east">East</button></li>
+    <li><button type="button" data-say="west">West</button></li>
+    <li><button type="button" data-say="fight">Fight</button></li>
+    <li><button type="button" data-say="inventory">Inventory</button></li>
+    <li><button type="button" data-say="who">Who</button></li>
+    <li><button type="button" data-say="more">More</button></li>
+    <li><button type="button" data-say="help">Help</button></li>
+  </ul>
+
+  <h2 id="story-heading">Story so far</h2>
+  <p class="hint">Newest last.</p>
+  <ol id="log" aria-labelledby="story-heading"></ol>
+
+  <div id="announce" class="visually-hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+  <noscript><p>This game needs JavaScript turned on.</p></noscript>
+</main>
+<script>
+(function () {
+  "use strict";
+  var MAX_ENTRIES = 200;
+  var form = document.getElementById("command-form");
+  var input = document.getElementById("command");
+  var log = document.getElementById("log");
+  var announcer = document.getElementById("announce");
+  var busy = false;
+  var queue = [];
+
+  function announce(text) {
+    // clear first, so the same reply twice is still read
+    announcer.textContent = "";
+    window.setTimeout(function () { announcer.textContent = text; }, 50);
+  }
+
+  function addEntry(said, reply) {
+    var li = document.createElement("li");
+    if (said) {
+      var you = document.createElement("p");
+      you.className = "you";
+      you.textContent = "You: " + said;
+      li.appendChild(you);
+    }
+    var p = document.createElement("p");
+    p.className = "reply";
+    p.textContent = reply;
+    li.appendChild(p);
+    log.appendChild(li);
+    while (log.children.length > MAX_ENTRIES) {
+      log.removeChild(log.firstChild);
+    }
+    li.scrollIntoView({ block: "end" });
+  }
+
+  function send(text) {
+    if (busy) {
+      queue.push(text);
+      return;
+    }
+    busy = true;
+    fetch("play/say", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8" },
+      body: new URLSearchParams({ text: text })
+    }).then(function (resp) {
+      return resp.json();
+    }).then(function (data) {
+      var reply = data.reply || "";
+      if (data.ended) {
+        reply += "\n\nThe game has ended. Send any command to start again.";
+      }
+      addEntry(text, reply);
+      announce(reply);
+    }).catch(function () {
+      var msg = "Could not reach the game. Check your connection and try again.";
+      addEntry(text, msg);
+      announce(msg);
+    }).then(function () {
+      busy = false;
+      if (queue.length) {
+        send(queue.shift());
+      }
+    });
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var text = input.value.trim();
+    if (!text) {
+      input.focus();
+      return;
+    }
+    input.value = "";
+    send(text);
+    input.focus();
+  });
+
+  // buttons send their command and keep focus, so the reply is heard without moving around
+  document.querySelectorAll("button[data-say]").forEach(function (b) {
+    b.addEventListener("click", function () { send(b.getAttribute("data-say")); });
+  });
+
+  send("");
+})();
+</script>
+</body>
+</html>
